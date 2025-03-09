@@ -1,5 +1,4 @@
 import streamlit as st
-import google.generativeai as genai
 import json
 from datetime import datetime, timedelta
 import calendar
@@ -16,6 +15,7 @@ from email_template import send_booking_confirmation
 from email_service import EmailService
 import os
 from dotenv import load_dotenv
+from openai import OpenAI
 
 load_dotenv()  # Load environment variables
 
@@ -141,8 +141,8 @@ def get_upi_qr(amount, upi_id="arupiop@axl", name="TixBee", user_email=None, boo
             </style>
         """, unsafe_allow_html=True)
         
-        # Using use_container_width instead of use_column_width
-        st.image(img_byte_arr, use_container_width=False, width=400)
+        # Using width parameter instead of use_container_width
+        st.image(img_byte_arr, width=400)
 
         # Only run timer if it hasn't completed before
         if not st.session_state['timer_completed']:
@@ -287,14 +287,16 @@ if 'conversation_history' not in st.session_state:
 if 'payment_completed' not in st.session_state:
     st.session_state['payment_completed'] = False
 
-# Configure the API and model
-api_key = os.getenv('GEMINI_API_KEY')
-genai.configure(api_key=api_key)
-model = genai.GenerativeModel("gemini-1.5-flash")
+# Configure OpenAI client
+client = OpenAI(
+    api_key=os.getenv('OPENAI_API_KEY'),
+    base_url=os.getenv('OPENAI_API_BASE')
+)
 
-# Initialize chat if not in session state
-if "chat" not in st.session_state:
-    st.session_state.chat = model.start_chat(history=[])
+# Initialize messages if not in session state
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+    st.session_state.messages.append({"role": "system", "content": initial_prompt})
 
 # Get current date information
 current_date = datetime.now()
@@ -310,7 +312,7 @@ initial_prompt = f"""You are TixBee, a friendly ticket booking assistant. You ar
 
 For Bengaluru:
 a) Bangalore Palace
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    A magnificent palace with Tudor-style architecture,
    featuring beautiful gardens and royal interiors.
 
@@ -352,7 +354,7 @@ d) National Zoological Park
 
 For Mumbai:
 a) Gateway of India
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    An iconic arch monument built in the Indo-Saracenic style,
    overlooking the Arabian Sea.
 
@@ -496,7 +498,15 @@ st.markdown("Your friendly ticket booking companion!")
 # Initialize chat with prompt and send welcome message
 if not st.session_state['greeted']:
     st.session_state['greeted'] = True
-    st.session_state.chat.send_message(initial_prompt)
+    st.session_state.messages = []
+    st.session_state.messages.append({"role": "system", "content": initial_prompt})
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=st.session_state.messages
+    )
+    assistant_message = response.choices[0].message.content
+    st.session_state.messages.append({"role": "assistant", "content": assistant_message})
+    st.markdown(assistant_message)
     
     welcome_message = """Hey there! 👋 I'm TixBee, your friendly ticket booking assistant! 
 
@@ -538,9 +548,15 @@ if prompt := st.chat_input("Type your message here..."):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Get bot response
-    response = st.session_state.chat.send_message(prompt)
-    response_text = response.text
+    # Get bot response using OpenAI API
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": initial_prompt},
+            *[{"role": msg["role"], "content": msg["content"]} for msg in st.session_state.messages]
+        ]
+    )
+    response_text = response.choices[0].message.content
     
     # Add assistant response
     st.session_state.messages.append({"role": "assistant", "content": response_text})
